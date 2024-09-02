@@ -1,7 +1,7 @@
 use core::time;
-use std::{env, error::Error, io::{self, BufRead, BufReader, Empty, Read, Write}, net::{TcpListener, TcpStream}, sync::mpsc::{self, Receiver, Sender, TryRecvError}, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{env, error::Error, io::{self, BufRead, BufReader, Write}, net::{TcpListener, TcpStream}, sync::mpsc::{self, Receiver, Sender, TryRecvError}, thread};
 
-use protocol::{check_checksum, gen_checksum, get_message_deserialized, serialize_header, MessageNice2MeetU, MessageText, Messages, MAGIC};
+use protocol::{check_checksum, gen_checksum, get_message_deserialized, serialize_header, MessageNice2MeetU, MessageText, Messages};
 mod protocol;
 
 fn main() {
@@ -12,21 +12,22 @@ fn main() {
     }
 }
 
-enum Signals{
-    COMMEND,
-
-}
-
-
 fn bind_and_connect(args:&Vec<String>, mut handles:Vec<std::thread::JoinHandle<()>>) -> Result<(), Box<dyn Error>> {
     let listener;
-    let mut my_addr = "127.0.0.76:8080";
-    let username:String;
-    if args.len() > 2 {
-        my_addr = "127.0.0.75:8080";
-        println!("Busco conectarme a: {}", args[2]);
-        username = args[1].clone();
-        match TcpStream::connect((args[2].clone(), 8080)){
+    let mut my_addr;
+    let username;
+    let peer_addr;
+    if args.len()<3{
+        println!("argumentos insuficientes");
+        return Ok(())
+    }
+    username = args[1].clone();
+    my_addr = args[2].clone();
+    my_addr.push_str(":8080");
+    if args.len()==4 {
+        peer_addr = args[3].clone();
+        println!("Busco conectarme a: {}", peer_addr);
+        match TcpStream::connect((peer_addr, 8080)){
             Ok(stream) => {
                 let username_clone = username.clone();
                 let handle = thread::spawn(|| {
@@ -34,21 +35,15 @@ fn bind_and_connect(args:&Vec<String>, mut handles:Vec<std::thread::JoinHandle<(
                 });
                 handles.push(handle);
             },
-            Err(_) => println!("No se encontró a ese peer"),
+            Err(e) => println!("Error estableciendo conexión: {}", e),
         };
     }
-    else if args.len()>1 {
-        println!("Solo recibo");
-        username = args[1].clone();
-    }
     else{
-        return Err("Faltan argumentos".into())
+        println!("No ha sido ingresado un peer, escuchando conexiones entrantes...")
     }
-    println!("Mi username es {}", username.clone());
-    listener = TcpListener::bind(my_addr)?;
-    println!("Yo soy {}", my_addr);
-    
 
+    listener = TcpListener::bind(my_addr)?;
+    
     for stream in listener.incoming() {
         let stream = stream?;
         let username_clone = username.clone();
@@ -149,7 +144,7 @@ fn handle_connection(s:TcpStream, username:String)-> Result<(), Box<dyn Error>>{
         thread::sleep(time::Duration::from_millis(200));
         match i2h_rx.try_recv(){
             Ok(s) => {
-                let mut chars = s.chars().collect();
+                let chars = s.chars().collect();
                 let text = MessageText{content: chars};
                 match h2s_tx.send(Messages::Text(text)){
                     Ok(_)=>{
@@ -201,8 +196,8 @@ fn send_messages(mut stream:TcpStream, rx_signal:Receiver<i32>, rx_message:Recei
                             stream.write(&payload)?;
                             //println!("written n2mu into tcp stream: {:?} {:?}", s, payload);
                         },
-                        Err(s) => {
-                            println!("error serializando");
+                        Err(e) => {
+                            println!("error serializando: {}", e);
                             continue;
                         },
                     }
@@ -224,8 +219,8 @@ fn send_messages(mut stream:TcpStream, rx_signal:Receiver<i32>, rx_message:Recei
                             stream.write(&payload)?;
                             //println!("written text into tcp stream: {:?} {:?}", s, payload);
                         },
-                        Err(s) => {
-                            println!("error serializando");
+                        Err(e) => {
+                            println!("error serializando: {}", e);
                             continue;
                         },
                     }
@@ -241,7 +236,7 @@ fn send_messages(mut stream:TcpStream, rx_signal:Receiver<i32>, rx_message:Recei
     return Ok(());
 }
 
-fn receive_messages(mut stream:TcpStream, tx_signal:Sender<i32>, tx_message:Sender<Messages>) -> Result<(), Box<dyn Error>> {
+fn receive_messages(stream:TcpStream, tx_signal:Sender<i32>, tx_message:Sender<Messages>) -> Result<(), Box<dyn Error>> {
     let mut reader = BufReader::new(stream);
     let mut buffer: Vec<u8> = vec![];
     let mut previous_size=0;
@@ -254,7 +249,6 @@ fn receive_messages(mut stream:TcpStream, tx_signal:Sender<i32>, tx_message:Send
             break;
         }
         while buffer.len() >= 24{
-            let header:[u8;24] = buffer[0..24].try_into()?;
             let command:[u8;12] = buffer[4..16].try_into()?;
             let checksum:[u8;4] = buffer[20..24].try_into()?;
             let size_slice:[u8;4] = buffer[16..20].try_into()?;

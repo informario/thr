@@ -10,7 +10,6 @@ pub enum Messages{
 }
 
 
-pub const MAGIC: [u8;4]= [121,104,119,104];
 pub const MAGIC_CHAR : [char;4]= ['y','h','w','h'];
 
 
